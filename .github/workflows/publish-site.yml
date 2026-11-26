@@ -21,11 +21,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  # Step 1: package the docs/ folder
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -34,5 +32,14 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: docs
+
+  # Step 2: publish it (must be a separate job that waits for step 1)
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
