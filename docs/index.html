@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Days since the last pedestrian or cyclist death in Toronto</title>
+<meta name="description" content="A running record of pedestrians and cyclists killed in traffic in the City of Toronto, compiled from news coverage and police releases.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Oswald:wght@500;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --yellow: #ffc20e;
+    --yellow-soft: #ffd65c;
+    --black: #111111;
+    --sign: #f6f3ec;
+    --paper: #f6f3ec;
+    --tile: #2b2b2b;
+    --digit: #ff5a4e;
+    --ped: #c8102e;
+    --cyc: #0a6fb0;
+    --muted: #5a5547;
+    --stripe: repeating-linear-gradient(-45deg, var(--black) 0 18px, var(--yellow) 18px 36px);
+    --display: "Oswald", "Arial Narrow", Impact, sans-serif;
+    --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--yellow); }
+  body {
+    margin: 0; color: var(--black);
+    font: 15px/1.55 var(--mono);
+    background: var(--yellow);
+    min-height: 100vh;
+    overflow-x: clip;
+  }
+  /* hazard tape along the top */
+  body::before {
+    content: ""; display: block; height: 28px; background: var(--stripe);
+    border-bottom: 3px solid var(--black);
+  }
+
+  main { max-width: 1120px; margin: 0 auto; padding: 56px 20px 64px; }
+
+  /* ---------- the sign ---------- */
+  .sign {
+    position: relative; max-width: 640px; margin: 0 auto;
+    background: var(--sign); border: 4px solid var(--black); border-radius: 22px;
+    padding: 40px 36px 34px; text-align: center;
+    transform: rotate(-2deg);
+    box-shadow: 0 0 0 8px var(--sign), 0 0 0 12px var(--black);
+  }
+  /* cut-out label text, like a photocopied poster */
+  mark { background: var(--black); color: var(--paper); padding: 0 .25em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  .inverse { display: inline-block; background: var(--black); color: var(--sign); padding: 0 .3em; margin-top: 4px; transform: rotate(1.5deg); }
+  .rivet { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--black); }
+  .rivet.tl { top: 16px; left: 16px; } .rivet.tr { top: 16px; right: 16px; }
+  .rivet.bl { bottom: 16px; left: 16px; } .rivet.br { bottom: 16px; right: 16px; }
+  .counter { display: flex; justify-content: center; gap: 10px; margin: 0 0 22px; }
+  .tile {
+    position: relative; min-width: clamp(70px, 16vw, 112px); padding: 6px 10px 0;
+    background: var(--tile); border-radius: 10px;
+    font-family: var(--display); font-weight: 700; color: var(--digit);
+    font-size: clamp(5.5rem, 20vw, 9rem); line-height: 1.1; font-variant-numeric: tabular-nums;
+  }
+  .tile::before { /* the flip split */
+    content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 3px;
+    background: var(--tile); box-shadow: 0 -1px 0 rgba(0,0,0,.35);
+  }
+  .tile::after { /* hinge tabs */
+    content: ""; position: absolute; top: calc(50% - 14px); left: -7px; right: -7px; height: 28px;
+    border-left: 7px solid #555; border-right: 7px solid #555; border-radius: 3px;
+  }
+  .sign h1 {
+    font-family: var(--display); font-weight: 700; text-transform: uppercase;
+    font-size: clamp(1.5rem, 4.6vw, 2.35rem); line-height: 1.1; margin: 0;
+  }
+  .sign h1 .kicker { display: block; font-size: 1.3em; line-height: 1; margin-bottom: 4px; }
+  .sign .where { font-style: italic; margin: 14px 0 0; font-size: .95rem; }
+  .last-death {
+    max-width: 640px; margin: 44px auto 0; text-align: center;
+    font-size: .9rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .last-death:empty { display: none; }
+
+  /* ---------- retro windows ---------- */
+  .window {
+    background: var(--paper); border: 3px solid var(--black);
+  }
+  .titlebar {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--black); color: var(--paper);
+    padding: 6px 12px; font-weight: 700; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .titlebar .lines {
+    flex: 1; height: 12px;
+    background: repeating-linear-gradient(to bottom, var(--paper) 0 2px, transparent 2px 4px);
+  }
+  .titlebar .x { font-size: 1.1rem; line-height: 1; }
+
+  .about { display: grid; grid-template-columns: 1.4fr 1fr; gap: 28px; margin: 72px 0 40px; }
+  .about .body { padding: 18px 20px; }
+  .about p { margin: 0; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; }
+  .stat { padding: 16px 8px; border-right: 3px solid var(--black); }
+  .stat:last-child { border-right: 0; }
+  .stat b { display: block; font-family: var(--display); font-size: 2.6rem; line-height: 1; }
+  .stat span { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
+
+  .filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
+  .filters button {
+    font: 700 .85rem var(--mono); text-transform: uppercase; letter-spacing: .05em;
+    padding: 8px 16px; cursor: pointer; color: var(--black);
+    background: var(--paper); border: 3px solid var(--black);
+  }
+  .filters button:hover { background: var(--yellow-soft); }
+  .filters button[aria-pressed="true"]:hover { background: var(--black); }
+  .filters button[aria-pressed="true"] { background: var(--black); color: var(--yellow); }
+  .filters button:focus-visible { outline: 3px solid var(--cyc); outline-offset: 3px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 2px solid var(--black); }
+  th {
+    font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+    background: var(--yellow-soft); border-bottom: 3px solid var(--black);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #fffaf0; }
+  td.date { white-space: nowrap; font-weight: 700; }
+  td.summary { min-width: 17rem; }
+  td.victim { font-family: var(--display); font-size: 1.1rem; font-weight: 500; line-height: 1.25; }
+  .tag {
+    display: inline-block; font-weight: 700; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
+    padding: 2px 7px; color: #fff; background: #555; white-space: nowrap;
+  }
+  .tag.pedestrian { background: var(--ped); }
+  .tag.cyclist { background: var(--cyc); }
+  .sub { color: var(--muted); font-size: .78rem; }
+  .sources a { color: var(--black); white-space: nowrap; }
+  .sources a:hover { background: var(--yellow); }
+  .empty, .error { padding: 28px 20px; margin: 0; font-weight: 700; text-transform: uppercase; }
+
+  footer { background: var(--black); color: #fff; font-size: .8rem; }
+  footer p { max-width: 1120px; margin: 0 auto; padding: 22px 20px; }
+
+  @media (max-width: 720px) {
+    main { padding-top: 40px; }
+    .sign { padding: 34px 22px 28px; transform: rotate(-1.5deg); }
+    .about { grid-template-columns: 1fr; margin-top: 56px; }
+    thead { display: none; }
+    table, tbody, tr, td { display: block; width: 100%; }
+    tr { padding: 14px 16px; border-bottom: 2px solid var(--black); }
+    tbody tr:last-child { border-bottom: 0; }
+    td { border: 0; padding: 2px 0; }
+    td[data-label]:not(:empty)::before {
+      content: attr(data-label) ": "; font-family: var(--mono); font-size: .72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .05em;
+    }
+    td.summary { min-width: 0; margin-top: 6px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .tile { animation: flip .5s ease-out both; }
+    @keyframes flip { from { transform: rotateX(80deg); } to { transform: none; } }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header class="sign">
+    <span class="rivet tl"></span><span class="rivet tr"></span><span class="rivet bl"></span><span class="rivet br"></span>
+    <div class="counter" id="days" role="img" aria-label="Loading"></div>
+    <h1><span class="kicker">Days since the last</span> pedestrian or cyclist <span class="inverse">killed</span></h1>
+    <p class="where">on the streets of Toronto</p>
+  </header>
+  <p class="last-death" id="since"></p>
+
+  <section class="about">
+    <div class="window">
+      <div class="titlebar"><span>README.TXT</span><span class="lines"></span></div>
+      <div class="body">
+        <p>A running record of people <mark>killed while walking or cycling</mark> in the City of Toronto, compiled from news reports and Toronto Police releases. Each entry is checked by a person before it appears here.</p>
+      </div>
+    </div>
+    <div class="window">
+      <div class="titlebar"><span id="stats-title">THIS YEAR</span><span class="lines"></span></div>
+      <div class="stats" id="stats" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <div class="filters" role="group" aria-label="Filter">
+    <button type="button" data-filter="all" aria-pressed="true">All</button>
+    <button type="button" data-filter="pedestrian" aria-pressed="false">Pedestrians</button>
+    <button type="button" data-filter="cyclist" aria-pressed="false">Cyclists</button>
+  </div>
+
+  <section class="window">
+    <div class="titlebar"><span>INCIDENTS.CSV</span><span class="lines"></span><span class="x" aria-hidden="true">×</span></div>
+    <div id="feed" aria-live="polite"><p class="empty">Loading…</p></div>
+  </section>
+</main>
+
+<footer>
+  <p>Compiled from public news coverage and Toronto Police Service news releases. Figures reflect deaths reported publicly and may differ from official data. <span id="updated"></span></p>
+</footer>
+
+<script>
+const CSV_URL = "data/incidents.csv";
+const REFRESH_MINUTES = 10;
+
+let allRows = [];
+let currentFilter = "all";
+
+// --- Small CSV parser (handles quotes, commas and line breaks inside fields) ---
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { field += c; }
+    } else if (c === '"') { inQuotes = true; }
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+    else if (c !== "\r") { field += c; }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  const [header, ...body] = rows;
+  if (!header) return [];
+  return body
+    .filter(r => r.some(v => v.trim() !== ""))
+    .map(r => Object.fromEntries(header.map((h, i) => [h.trim(), (r[i] || "").trim()])));
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function parseDate(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+
+function describeVictim(r) {
+  const type = r.victim_type === "unknown" || !r.victim_type ? "Person" : r.victim_type;
+  const bits = [];
+  if (r.victim_gender) bits.push(r.victim_gender);
+  if (r.victim_age) bits.push(r.victim_age);
+  const detail = bits.join(", ");
+  if (r.victim_name) return detail ? `${r.victim_name}, ${detail}` : r.victim_name;
+  if (detail) return detail.charAt(0).toUpperCase() + detail.slice(1);
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function renderSources(s) {
+  return (s || "").split(" | ").map(part => {
+    const at = part.indexOf("http");
+    if (at < 0) return null;
+    const name = part.slice(0, at).replace(/:\s*$/, "").trim() || "Source";
+    const url = part.slice(at).trim();
+    if (!/^https?:\/\//.test(url)) return null;
+    return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a>`;
+  }).filter(Boolean).join("<br>");
+}
+
+function typeClass(t) {
+  return t === "pedestrian" ? "pedestrian" : t === "cyclist" ? "cyclist" : "other";
+}
+
+function renderStats(rows) {
+  const year = new Date().getFullYear();
+  const thisYear = rows.filter(r => parseDate(r.incident_date)?.getFullYear() === year);
+  const ped = thisYear.filter(r => r.victim_type === "pedestrian").length;
+  const cyc = thisYear.filter(r => r.victim_type === "cyclist").length;
+  document.getElementById("stats-title").textContent = `KILLED IN ${year}`;
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><b>${thisYear.length}</b><span>Total</span></div>
+    <div class="stat"><b>${ped}</b><span>Walking</span></div>
+    <div class="stat"><b>${cyc}</b><span>Cycling</span></div>`;
+}
+
+function renderDaysSince(rows) {
+  const daysEl = document.getElementById("days");
+  const sinceEl = document.getElementById("since");
+  const latest = rows.map(r => ({ r, d: parseDate(r.incident_date) })).filter(x => x.d).sort((a, b) => b.d - a.d)[0];
+  const showTiles = (text, label) => {
+    daysEl.innerHTML = [...String(text)].map(ch => `<span class="tile" aria-hidden="true">${esc(ch)}</span>`).join("");
+    daysEl.setAttribute("aria-label", label);
+  };
+  if (!latest) { showTiles("–", "No deaths recorded yet"); sinceEl.textContent = ""; return; }
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.max(0, Math.round((today - latest.d) / 86400000));
+  if (daysEl.dataset.value !== String(days)) {
+    showTiles(days, `${days} days`);
+    daysEl.dataset.value = days;
+  }
+  const where = latest.r.location && latest.r.location !== "Unknown" ? ` · ${latest.r.location}` : "";
+  sinceEl.textContent = "Last death: " +
+    latest.d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) + where;
+}
+
+function renderFeed() {
+  const feed = document.getElementById("feed");
+  const rows = allRows.filter(r => currentFilter === "all" || r.victim_type === currentFilter);
+  if (!rows.length) { feed.innerHTML = `<p class="empty">No entries yet.</p>`; return; }
+
+  const body = rows.map(r => {
+    const d = parseDate(r.incident_date);
+    const dateText = d ? d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" }) : "Unknown";
+    const location = r.location && r.location !== "Unknown" ? r.location : "Not reported";
+    return `
+      <tr>
+        <td class="date">${esc(dateText)}</td>
+        <td><span class="tag ${typeClass(r.victim_type)}">${esc(r.victim_type || "unknown")}</span></td>
+        <td class="victim">${esc(describeVictim(r))}</td>
+        <td data-label="Location">${esc(location)}${r.neighbourhood ? `<div class="sub">${esc(r.neighbourhood)}</div>` : ""}</td>
+        <td data-label="Vehicle">${esc(r.vehicle_type)}</td>
+        <td class="summary">${esc(r.summary)}</td>
+        <td class="sources" data-label="Sources">${renderSources(r.sources)}</td>
+      </tr>`;
+  }).join("");
+
+  feed.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Type</th><th>Victim</th><th>Location</th><th>Vehicle</th><th>What happened</th><th>Sources</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
+function showData(csvText) {
+  allRows = parseCSV(csvText)
+    .filter(r => r.status === "published")
+    .sort((a, b) => (b.incident_date || "").localeCompare(a.incident_date || ""));
+  renderDaysSince(allRows);
+  renderStats(allRows);
+  renderFeed();
+  document.getElementById("updated").textContent =
+    "Page refreshed " + new Date().toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+}
+
+async function load() {
+  try {
+    const res = await fetch(`${CSV_URL}?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    showData(await res.text());
+  } catch (err) {
+    if (!allRows.length) {
+      document.getElementById("feed").innerHTML = `<p class="error">The feed couldn't be loaded right now. Please try again shortly.</p>`;
+    }
+  }
+}
+
+document.querySelectorAll(".filters button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    currentFilter = btn.dataset.filter;
+    document.querySelectorAll(".filters button").forEach(b => b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+    renderFeed();
+  });
+});
+
+load();
+setInterval(load, REFRESH_MINUTES * 60 * 1000);
+</script>
+</body>
+</html>
