@@ -123,7 +123,7 @@
   .filters button:focus-visible { outline: 3px solid var(--cyc); outline-offset: 3px; }
 
   .table-wrap { overflow-x: auto; }
-  table { width: 100%; min-width: 980px; border-collapse: collapse; font-size: .85rem; }
+  table { width: 100%; min-width: 1040px; border-collapse: collapse; font-size: .85rem; }
   th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 2px solid var(--black); }
   th {
     font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
@@ -132,7 +132,9 @@
   tbody tr:last-child td { border-bottom: 0; }
   tbody tr:hover { background: #fffaf0; }
   td.date { white-space: nowrap; font-weight: 700; }
-  td.summary { min-width: 17rem; }
+  td.summary { min-width: 26rem; width: 40%; }
+  td.sources { width: 9.5rem; max-width: 9.5rem; }
+  td[data-label="Location"] { min-width: 9.5rem; }
   td.victim { font-family: var(--display); font-size: 1.1rem; font-weight: 500; line-height: 1.25; }
   .tag {
     display: inline-block; font-weight: 700; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
@@ -141,7 +143,7 @@
   .tag.pedestrian { background: var(--ped); }
   .tag.cyclist { background: var(--cyc); }
   .sub { color: var(--muted); font-size: .78rem; }
-  .sources a { color: var(--black); white-space: nowrap; }
+  .sources a { display: block; max-width: 9.5rem; color: var(--black); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sources a:hover { background: var(--yellow); }
   .sources details { margin-top: 2px; }
   .sources summary { cursor: pointer; font-weight: 700; font-size: .78rem; white-space: nowrap; list-style: none; text-decoration: underline; }
@@ -174,7 +176,10 @@
       content: attr(data-label) ": "; font-family: var(--mono); font-size: .72rem; font-weight: 700;
       text-transform: uppercase; letter-spacing: .05em;
     }
-    td.summary { min-width: 0; margin-top: 6px; }
+    td.summary { min-width: 0; width: 100%; margin-top: 6px; }
+    td.sources { max-width: none; }
+    td[data-label="Location"] { min-width: 0; }
+    .sources a { max-width: 100%; }
   }
   @media (prefers-reduced-motion: no-preference) {
     .tile { animation: flip .5s ease-out both; }
@@ -282,10 +287,10 @@ function renderSources(s) {
     if (!/^https?:\/\//.test(url)) return null;
     return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a>`;
   }).filter(Boolean);
-  if (links.length <= SOURCES_SHOWN + 1) return links.join("<br>");
+  if (links.length <= SOURCES_SHOWN + 1) return links.join("");
   const extra = links.length - SOURCES_SHOWN;
-  return links.slice(0, SOURCES_SHOWN).join("<br>") +
-    `<details><summary>+${extra} more</summary>${links.slice(SOURCES_SHOWN).join("<br>")}</details>`;
+  return links.slice(0, SOURCES_SHOWN).join("") +
+    `<details><summary>+${extra} more</summary>${links.slice(SOURCES_SHOWN).join("")}</details>`;
 }
 
 function typeClass(t) {
