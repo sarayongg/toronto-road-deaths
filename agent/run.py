@@ -19,7 +19,8 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import quote_plus, urljoin
@@ -47,7 +48,7 @@ AUTO_PUBLISH = False
 LOOKBACK_DAYS = 14
 
 # Safety limit on how many articles Claude reads per run (controls cost).
-MAX_ARTICLES_PER_RUN = 25
+MAX_ARTICLES_PER_RUN = 80
 
 # Google News searches. Add or remove phrases freely.
 GOOGLE_NEWS_SEARCHES = [
@@ -73,6 +74,24 @@ POLICE_RELEASES_URL = (
     "https://www.tps.ca/media-centre/news-releases/"
     "?q=&unit=traffic-services&division=&category="
 )
+# Used only by the catch-up run: the full release list, which goes back further.
+POLICE_ALL_RELEASES_URL = (
+    "https://www.tps.ca/media-centre/news-releases/"
+    "?q=&unit=&division=&category="
+)
+
+# --- Catch-up run (the "Catch up on past deaths" workflow) -------------------
+# Limits for one catch-up run. If it stops early, just run it again: it skips
+# everything it has already read and carries on.
+BACKFILL_MAX_ARTICLES = 1500
+BACKFILL_MAX_MINUTES = 300
+
+# Set by the catch-up workflow. Leave these alone.
+BACKFILL_FROM = os.environ.get("BACKFILL_FROM", "").strip()  # e.g. "2026-01-01"
+# "Police releases only" (default) or "Police releases and news"
+BACKFILL_NEWS = "news" in os.environ.get("BACKFILL_SOURCES", "").lower()
+if os.environ.get("BACKFILL_PUBLISH", "").strip().lower() == "true":
+    AUTO_PUBLISH = True
 
 # =============================================================================
 # Files (you shouldn't need to change these)
@@ -111,6 +130,11 @@ VICTIM_WORDS = re.compile(
     re.IGNORECASE,
 )
 DEATH_WORDS = re.compile(r"kill|\bdies\b|\bdied\b|\bdead\b|death|fatal", re.IGNORECASE)
+# Catch-up run only: the headline must place the story in Toronto.
+TORONTO_WORDS = re.compile(
+    r"toronto|scarborough|etobicoke|north york|east york|\byork\b|\bttc\b|streetcar|crosstown|eglinton",
+    re.IGNORECASE,
+)
 
 
 # =============================================================================
@@ -231,59 +255,77 @@ def feed_urls() -> list[str]:
     return urls + EXTRA_FEEDS
 
 
+def read_feed(url: str, seen: dict, found: dict, cutoff: datetime) -> None:
+    """Read one RSS feed and add new, likely-relevant articles to `found`."""
+    feed = feedparser.parse(url, agent=USER_AGENT)
+    feed_title = feed.feed.get("title", "")
+    for entry in feed.entries:
+        link = entry.get("link")
+        if not link or link in seen or link in found:
+            continue
+        parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+        published = datetime(*parsed[:6], tzinfo=timezone.utc) if parsed else datetime.now(timezone.utc)
+        if published < cutoff:
+            continue
+        title = clean_html(entry.get("title", ""))
+        snippet = clean_html(entry.get("summary", ""))
+        text = f"{title} {snippet}"
+        if not (VICTIM_WORDS.search(text) and DEATH_WORDS.search(text)):
+            continue
+        source = entry.get("source")
+        outlet = (source.get("title") if source else None) or feed_title or "News"
+        found[link] = {
+            "url": link,
+            "title": title,
+            "snippet": snippet,
+            "outlet": outlet,
+            "published": published,
+        }
+
+
 def collect_articles(seen: dict) -> list[dict]:
-    """Read every feed and return new, likely-relevant articles."""
+    """Read every feed (last LOOKBACK_DAYS days) and return new, likely-relevant articles."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
     found: dict[str, dict] = {}
     for url in feed_urls():
-        feed = feedparser.parse(url, agent=USER_AGENT)
-        feed_title = feed.feed.get("title", "")
-        for entry in feed.entries:
-            link = entry.get("link")
-            if not link or link in seen or link in found:
-                continue
-            parsed = entry.get("published_parsed") or entry.get("updated_parsed")
-            published = datetime(*parsed[:6], tzinfo=timezone.utc) if parsed else datetime.now(timezone.utc)
-            if published < cutoff:
-                continue
-            title = clean_html(entry.get("title", ""))
-            snippet = clean_html(entry.get("summary", ""))
-            text = f"{title} {snippet}"
-            if not (VICTIM_WORDS.search(text) and DEATH_WORDS.search(text)):
-                continue
-            source = entry.get("source")
-            outlet = (source.get("title") if source else None) or feed_title or "News"
-            found[link] = {
-                "url": link,
-                "title": title,
-                "snippet": snippet,
-                "outlet": outlet,
-                "published": published,
-            }
-    # Oldest first, so the first report of a death creates the incident.
-    return sorted(found.values(), key=lambda a: a["published"])
+        read_feed(url, seen, found, cutoff)
+    return list(found.values())
 
 
-def collect_police_releases(seen: dict) -> list[dict]:
-    """Read the Toronto Police Traffic Services news releases list."""
-    if not READ_POLICE_RELEASES:
-        return []
-    try:
-        resp = requests.get(POLICE_RELEASES_URL, timeout=20, headers={"User-Agent": USER_AGENT})
-        resp.raise_for_status()
-    except requests.RequestException as err:
-        print(f"Couldn't read Toronto Police news releases this time: {err}")
-        return []
+def collect_articles_since(seen: dict, start: date) -> list[dict]:
+    """Catch-up run: search Google News one week at a time from `start` to today."""
+    cutoff = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+    found: dict[str, dict] = {}
+    week_start = start
+    today = datetime.now(timezone.utc).date()
+    while week_start <= today:
+        week_end = week_start + timedelta(days=7)
+        for phrase in GOOGLE_NEWS_SEARCHES:
+            q = quote_plus(f"{phrase} after:{week_start.isoformat()} before:{week_end.isoformat()}")
+            read_feed(f"https://news.google.com/rss/search?q={q}&hl=en-CA&gl=CA&ceid=CA:en", seen, found, cutoff)
+            time.sleep(1)  # be polite to Google News
+        print(f"  Searched the week of {week_start.isoformat()}: {len(found)} candidate article(s) so far.")
+        week_start = week_end
+    # Only keep headlines that place the story in Toronto. Week-by-week searches
+    # pull in many stories from elsewhere, and each one Claude reads costs money.
+    kept = [a for a in found.values() if TORONTO_WORDS.search(f"{a['title']} {a['snippet']}")]
+    print(f"Google News: {len(kept)} of {len(found)} candidate article(s) mention Toronto.")
+    return kept
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    found = []
+
+def police_releases_on_page(html: str, base_url: str, seen: dict, found: dict, cutoff: datetime) -> int:
+    """Add the "Fatal" releases on one list page to `found`. Returns how many releases the page had."""
+    soup = BeautifulSoup(html, "html.parser")
+    on_page = 0
     for link in soup.find_all("a", href=re.compile(r"/news-releases/\d+/?$")):
         title = " ".join(link.get_text(" ", strip=True).split())
-        if not title or not re.search(r"fatal", title, re.IGNORECASE):
+        if not title:
             continue
-        url = urljoin(POLICE_RELEASES_URL, link["href"])
-        if url in seen or any(a["url"] == url for a in found):
+        on_page += 1
+        if not re.search(r"fatal", title, re.IGNORECASE):
+            continue
+        url = urljoin(base_url, link["href"])
+        if url in seen or url in found:
             continue
         container = link.find_parent("article") or link.parent
         match = re.search(
@@ -295,17 +337,52 @@ def collect_police_releases(seen: dict) -> list[dict]:
             published = datetime.now(timezone.utc)
         if published < cutoff:
             continue
-        found.append(
-            {
-                "url": url,
-                "title": title,
-                "snippet": "",
-                "outlet": "Toronto Police Service",
-                "published": published,
-            }
-        )
+        found[url] = {
+            "url": url,
+            "title": title,
+            "snippet": "",
+            "outlet": "Toronto Police Service",
+            "published": published,
+        }
+    return on_page
+
+
+def fetch_page(url: str) -> Optional[str]:
+    try:
+        resp = requests.get(url, timeout=20, headers={"User-Agent": USER_AGENT})
+        resp.raise_for_status()
+        return resp.text
+    except requests.RequestException as err:
+        print(f"Couldn't read {url}: {err}")
+        return None
+
+
+def collect_police_releases(seen: dict, start: Optional[date] = None) -> list[dict]:
+    """Read Toronto Police news releases with "Fatal" in the title.
+
+    Normal runs read the first page of Traffic Services releases (last LOOKBACK_DAYS days).
+    The catch-up run pages through every list the police site still has, back to `start`.
+    """
+    if not READ_POLICE_RELEASES:
+        return []
+    if start:
+        cutoff = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
+        lists, max_pages = [POLICE_RELEASES_URL, POLICE_ALL_RELEASES_URL], 60
+    else:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
+        lists, max_pages = [POLICE_RELEASES_URL], 1
+
+    found: dict[str, dict] = {}
+    for list_url in lists:
+        for page in range(1, max_pages + 1):
+            url = list_url if page == 1 else f"{list_url}&page={page}"
+            html = fetch_page(url)
+            if html is None or police_releases_on_page(html, list_url, seen, found, cutoff) == 0:
+                break
+            if max_pages > 1:
+                time.sleep(1)
     print(f"Toronto Police: {len(found)} new fatal-collision release(s).")
-    return found
+    return list(found.values())
 
 
 def fetch_article_text(url: str) -> str:
@@ -325,8 +402,10 @@ def fetch_article_text(url: str) -> str:
     return "\n".join(p for p in paragraphs if len(p) > 40)[:8000]
 
 
-def recent_incidents_for_prompt(rows: list[dict]) -> str:
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+def recent_incidents_for_prompt(rows: list[dict], around: datetime) -> str:
+    """Incidents recorded within 90 days before (or 14 after) the article's date."""
+    earliest = (around - timedelta(days=90)).strftime("%Y-%m-%d")
+    latest = (around + timedelta(days=14)).strftime("%Y-%m-%d")
     recent = [
         {
             "incident_id": r["incident_id"],
@@ -337,7 +416,7 @@ def recent_incidents_for_prompt(rows: list[dict]) -> str:
             "summary": r["summary"],
         }
         for r in rows
-        if (r.get("incident_date") or r.get("first_seen", "")[:10]) >= cutoff
+        if earliest <= (r.get("incident_date") or r.get("first_seen", "")[:10]) <= latest
     ]
     return json.dumps(recent, indent=1) if recent else "[] (none yet)"
 
@@ -346,7 +425,8 @@ def ask_claude(client: anthropic.Anthropic, article: dict, rows: list[dict]) -> 
     body = fetch_article_text(article["url"]) or article["snippet"] or "(only the headline is available)"
     user_message = (
         f"Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}\n\n"
-        f"Recent incidents already recorded:\n{recent_incidents_for_prompt(rows)}\n\n"
+        f"Incidents already recorded around this article's date:\n"
+        f"{recent_incidents_for_prompt(rows, article['published'])}\n\n"
         "<article>\n"
         f"Outlet: {article['outlet']}\n"
         f"Published: {article['published'].strftime('%Y-%m-%d')}\n"
@@ -434,16 +514,22 @@ def write_report(new_rows: list[dict]) -> None:
         "click **Commit changes**.",
         "",
     ]
-    for r in new_rows:
+    if AUTO_PUBLISH:
+        lines[0] = "The tracker found new incident(s). They are already **published** on the website."
+        lines[2] = "Please check them; to hide one, change its `status` in `docs/data/incidents.csv` to `rejected`."
+    for r in sorted(new_rows, key=lambda r: r["incident_date"]):
         lines += [
             f"### {r['incident_date']} · {r['victim_type']} · {r['location']}",
             f"- ID: `{r['incident_id']}`",
             f"- Confidence: {r['confidence']}",
             f"- {r['summary']}",
-            f"- Source: {r['sources']}",
+            f"- Source: {r['sources'].split(' | ')[0]}",
             "",
         ]
-    Path(REPORT_PATH).write_text("\n".join(lines), encoding="utf-8")
+    text = "\n".join(lines)
+    if len(text) > 60000:  # GitHub issues have a size limit
+        text = text[:60000] + "\n\n…list cut short. See `docs/data/incidents.csv` for everything."
+    Path(REPORT_PATH).write_text(text, encoding="utf-8")
 
 
 # =============================================================================
@@ -460,37 +546,77 @@ def main() -> None:
     seen = load_seen()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    articles = collect_articles(seen) + collect_police_releases(seen)
-    # Oldest first, so the first report of a death creates the incident.
-    articles.sort(key=lambda a: a["published"])
+    if BACKFILL_FROM:
+        # ---- Catch-up run: everything since BACKFILL_FROM, oldest first ----
+        try:
+            start = date.fromisoformat(BACKFILL_FROM)
+        except ValueError:
+            sys.exit(f"Start date '{BACKFILL_FROM}' isn't a date like 2026-01-01.")
+        what = "police releases and news" if BACKFILL_NEWS else "police releases only"
+        print(f"CATCH-UP RUN from {start.isoformat()} ({what}). Collecting articles...")
+        police = collect_police_releases(seen, start)
+        news = collect_articles_since(seen, start) if BACKFILL_NEWS else []
+        # Oldest first, and police releases before news on the same day, so each
+        # death is created from the most reliable early report and later
+        # articles attach to it.
+        articles = sorted(police + news, key=lambda a: (a["published"].date(), a["outlet"] != "Toronto Police Service"))
+        max_articles = BACKFILL_MAX_ARTICLES
+        deadline = time.monotonic() + BACKFILL_MAX_MINUTES * 60
+    else:
+        # ---- Normal hourly run: newest first ----
+        articles = collect_articles(seen) + collect_police_releases(seen)
+        articles.sort(key=lambda a: a["published"], reverse=True)
+        max_articles = MAX_ARTICLES_PER_RUN
+        deadline = None
+
     print(f"Found {len(articles)} new candidate article(s).")
-    if len(articles) > MAX_ARTICLES_PER_RUN:
-        print(f"Reading the first {MAX_ARTICLES_PER_RUN}; the rest wait for the next run.")
-        articles = articles[:MAX_ARTICLES_PER_RUN]
+    if len(articles) > max_articles:
+        print(f"Reading {max_articles} this run; the rest wait for the next run.")
+        articles = articles[:max_articles]
 
     new_rows = []
-    for article in articles:
-        print(f"- {article['title']} ({article['outlet']})")
-        try:
-            ex = ask_claude(client, article, rows)
-        except anthropic.AuthenticationError:
-            sys.exit("The Anthropic API key was rejected. Check the ANTHROPIC_API_KEY secret.")
-        except anthropic.RateLimitError:
-            print("   Rate limited; stopping for now, will continue next run.")
+    for i, article in enumerate(articles, 1):
+        if deadline and time.monotonic() > deadline:
+            print("Time limit reached. Progress is saved: run the catch-up again to continue.")
             break
-        except (anthropic.APIStatusError, anthropic.APIConnectionError) as err:
-            print(f"   API error, will retry next run: {err}")
+        print(f"- [{i}/{len(articles)}] {article['published'].strftime('%Y-%m-%d')} {article['title']} ({article['outlet']})")
+        ex, attempts = None, 0
+        while True:
+            try:
+                ex = ask_claude(client, article, rows)
+                break
+            except anthropic.AuthenticationError:
+                save_incidents(rows)
+                save_seen(seen)
+                sys.exit("The Anthropic API key was rejected. Check the ANTHROPIC_API_KEY secret.")
+            except anthropic.RateLimitError:
+                attempts += 1
+                if not deadline or attempts > 5:
+                    print("   Rate limited; skipping for now, will retry next run.")
+                    ex = "retry"
+                    break
+                print("   Rate limited; waiting a minute...")
+                time.sleep(60)
+            except (anthropic.APIStatusError, anthropic.APIConnectionError) as err:
+                print(f"   API error, will retry next run: {err}")
+                ex = "retry"
+                break
+        if ex == "retry":
             continue
 
         seen[article["url"]] = today
-        if ex is None:
-            continue
-        if not ex.is_relevant:
-            print(f"   Not relevant: {ex.relevance_reason}")
-            continue
-        new_row = apply_extraction(rows, ex, article)
-        if new_row:
-            new_rows.append(new_row)
+        if ex is not None:
+            if not ex.is_relevant:
+                print(f"   Not relevant: {ex.relevance_reason}")
+            else:
+                new_row = apply_extraction(rows, ex, article)
+                if new_row:
+                    new_rows.append(new_row)
+
+        # Save progress regularly so a long catch-up run never loses work.
+        if i % 10 == 0:
+            save_incidents(rows)
+            save_seen(seen)
 
     save_incidents(rows)
     save_seen(seen)
