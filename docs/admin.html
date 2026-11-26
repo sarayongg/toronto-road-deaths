@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Incident editor</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3CclipPath id='c'%3E%3Crect width='32' height='32' rx='6'/%3E%3C/clipPath%3E%3Cg clip-path='url(%23c)'%3E%3Crect width='32' height='32' fill='%23ffc20e'/%3E%3Cpath d='M-24 32L8 0M-12 32L20 0M0 32L32 0M12 32L44 0M24 32L56 0' stroke='%23111' stroke-width='5'/%3E%3C/g%3E%3Crect x='1' y='1' width='30' height='30' rx='5' fill='none' stroke='%23111' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --yellow: #ffc20e;
+    --yellow-soft: #ffd65c;
+    --black: #111111;
+    --paper: #f6f3ec;
+    --ped: #c8102e;
+    --cyc: #0a6fb0;
+    --ok: #1d7a3a;
+    --muted: #5a5547;
+    --changed: #fff3c4;
+    --stripe: repeating-linear-gradient(-45deg, var(--black) 0 18px, var(--yellow) 18px 36px);
+    --display: "Oswald", "Arial Narrow", Impact, sans-serif;
+    --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--black); font: 14px/1.5 var(--mono); background: var(--yellow); min-height: 100vh; }
+  body::before { content: ""; display: block; height: 20px; background: var(--stripe); border-bottom: 3px solid var(--black); }
+  main { max-width: 1500px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 2rem; line-height: 1; margin: 0 0 6px; }
+  .lede { margin: 0 0 24px; }
+  .lede a { color: inherit; }
+
+  .window { background: var(--paper); border: 3px solid var(--black); margin-bottom: 20px; }
+  .titlebar { background: var(--black); color: var(--paper); padding: 6px 12px; font-weight: 700; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; }
+  .pad { padding: 16px 18px; }
+
+  label { font-weight: 700; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 4px; }
+  input, select, textarea, button { font: inherit; color: var(--black); }
+  input[type=text], input[type=password], input[type=date], input[type=number], input[type=search], select, textarea {
+    width: 100%; padding: 5px 7px; background: #fff; border: 2px solid var(--black); border-radius: 0;
+  }
+  textarea { resize: vertical; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 3px solid var(--cyc); outline-offset: 1px; }
+
+  .btn { padding: 7px 14px; border: 3px solid var(--black); background: var(--paper); font-weight: 700; text-transform: uppercase; font-size: .8rem; letter-spacing: .04em; cursor: pointer; white-space: nowrap; }
+  .btn:hover { background: var(--yellow-soft); }
+  .btn.primary { background: var(--black); color: var(--yellow); }
+  .btn.primary:hover { background: #333; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .linkish { background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; font-size: .8rem; }
+
+  .connect { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 12px; align-items: end; }
+  .connect .remember { grid-column: 1 / -1; display: flex; gap: 16px; align-items: center; font-size: .8rem; }
+  .connect .remember label { display: inline; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: .8rem; }
+  .help { font-size: .8rem; color: var(--muted); margin: 10px 0 0; }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .tabs { display: flex; gap: 0; }
+  .tabs button { border: 3px solid var(--black); margin-left: -3px; background: var(--paper); padding: 6px 12px; font-weight: 700; font-size: .78rem; text-transform: uppercase; cursor: pointer; }
+  .tabs button:first-child { margin-left: 0; }
+  .tabs button[aria-pressed="true"] { background: var(--black); color: var(--yellow); }
+  .toolbar .search { width: 240px; }
+  .toolbar .spacer { flex: 1; }
+
+  .bulk { display: none; gap: 8px; align-items: center; padding: 8px 12px; background: var(--black); color: var(--paper); margin-bottom: 10px; font-size: .85rem; }
+  .bulk.show { display: flex; flex-wrap: wrap; }
+  .bulk .btn { padding: 4px 10px; font-size: .72rem; }
+
+  #status { min-height: 1.5em; font-weight: 700; margin: 0 0 12px; }
+  #status.error { color: var(--ped); }
+  #status.ok { color: var(--ok); }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; min-width: 1350px; border-collapse: collapse; font-size: .82rem; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 6px; border-bottom: 2px solid var(--black); }
+  th { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; background: var(--yellow-soft); border-bottom: 3px solid var(--black); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+  tr.changed td { background: var(--changed); }
+  tr.is-new td:first-child { box-shadow: inset 5px 0 0 var(--ok); }
+  td.check { width: 28px; text-align: center; }
+  td.check input { width: 16px; height: 16px; }
+  .w-status { width: 118px; } .w-date { width: 140px; } .w-type { width: 150px; }
+  .w-age { width: 64px; } .w-gender { width: 90px; } .w-vehicle { width: 120px; }
+  .w-loc { width: 190px; } .w-summary { min-width: 260px; } .w-src { width: 210px; }
+  select.status { font-weight: 700; }
+  select.status.pending { background: var(--yellow-soft); }
+  select.status.published { background: #d7f0dc; }
+  select.status.rejected { background: #eee; color: #666; text-decoration: line-through; }
+  select.type.pedestrian { color: var(--ped); font-weight: 700; }
+  select.type.cyclist { color: var(--cyc); font-weight: 700; }
+  td input + input { margin-top: 4px; }
+  .sources a { display: block; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+  .sources details { margin-top: 4px; }
+  .sources summary { cursor: pointer; font-size: .75rem; text-decoration: underline; }
+  .meta { color: var(--muted); font-size: .72rem; margin-top: 4px; }
+  .empty { padding: 24px; font-weight: 700; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Incident editor</h1>
+  <p class="lede">Review and correct the incidents table. Changes are saved straight to GitHub, and the public page updates about a minute later. <a href="./">View the public page</a></p>
+
+  <!-- 1. Connect -->
+  <section class="window" id="connect-box">
+    <div class="titlebar">Connect to GitHub</div>
+    <div class="pad">
+      <form class="connect" id="connect-form">
+        <div>
+          <label for="token">GitHub access key (token)</label>
+          <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="github_pat_…" required>
+        </div>
+        <div>
+          <label for="owner">GitHub username</label>
+          <input type="text" id="owner" required>
+        </div>
+        <div>
+          <label for="repo">Repository</label>
+          <input type="text" id="repo" required>
+        </div>
+        <button class="btn primary" type="submit">Connect</button>
+        <div class="remember">
+          <span><input type="checkbox" id="remember"> <label for="remember">Remember the key on this device</label></span>
+        </div>
+      </form>
+      <p class="help">The key is only sent to GitHub. It never goes anywhere else. Don't tick "remember" on a shared computer.</p>
+    </div>
+  </section>
+
+  <!-- 2. Editor -->
+  <section id="editor" hidden>
+    <div class="toolbar">
+      <div class="tabs" role="group" aria-label="Show">
+        <button type="button" data-filter="pending" aria-pressed="true">Pending <span data-count="pending"></span></button>
+        <button type="button" data-filter="published" aria-pressed="false">Published <span data-count="published"></span></button>
+        <button type="button" data-filter="rejected" aria-pressed="false">Rejected <span data-count="rejected"></span></button>
+        <button type="button" data-filter="all" aria-pressed="false">All <span data-count="all"></span></button>
+      </div>
+      <input type="search" class="search" id="search" placeholder="Search location, summary…" aria-label="Search">
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="add">+ Add incident</button>
+      <button class="btn" type="button" id="reload">Reload</button>
+      <button class="btn primary" type="button" id="save" disabled>Save changes</button>
+    </div>
+
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <div class="bulk" id="bulk">
+      <span id="bulk-count"></span>
+      <button class="btn" type="button" data-bulk="published">Publish</button>
+      <button class="btn" type="button" data-bulk="rejected">Reject</button>
+      <button class="btn" type="button" data-bulk="pending">Mark pending</button>
+      <button class="linkish" type="button" id="clear-selection" style="color:inherit">Clear selection</button>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">Incidents</div>
+      <div class="table-wrap" id="table"></div>
+    </div>
+
+    <p class="help">Rows you've changed are highlighted until you save. <button class="linkish" type="button" id="forget">Forget my access key on this device</button></p>
+  </section>
+</main>
+
+<script>
+const CSV_PATH = "docs/data/incidents.csv";
+const BRANCH = "main";
+const STATUSES = ["pending", "published", "rejected"];
+const TYPES = ["pedestrian", "cyclist", "e-scooter or mobility device", "unknown"];
+const DEFAULT_COLUMNS = ["incident_id","status","incident_date","victim_type","victim_name","victim_age","victim_gender","location","neighbourhood","vehicle_type","summary","sources","confidence","first_seen","last_updated"];
+const DEMO = new URLSearchParams(location.search).has("demo"); // local testing only: loads data/incidents.csv, saving downloads a file
+
+let conn = null;          // { token, owner, repo }
+let sha = null;           // version of the file we loaded
+let columns = DEFAULT_COLUMNS;
+let rows = [];            // [{ key, data, original, isNew }]
+let filter = "pending";
+let query = "";
+const selected = new Set();
+let newCounter = 0;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- CSV ----------
+function parseCSV(text) {
+  const out = [];
+  let row = [], field = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') q = false;
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n") { row.push(field); out.push(row); row = []; field = ""; }
+    else if (c !== "\r") field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); out.push(row); }
+  return out.filter(r => r.some(v => v.trim() !== ""));
+}
+function csvField(v) {
+  v = String(v ?? "");
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+function toCSV() {
+  const lines = [columns.map(csvField).join(",")];
+  const sorted = [...rows].sort((a, b) =>
+    (b.data.incident_date || "").localeCompare(a.data.incident_date || "") ||
+    (b.data.first_seen || "").localeCompare(a.data.first_seen || ""));
+  for (const r of sorted) lines.push(columns.map(c => csvField(r.data[c])).join(","));
+  return lines.join("\r\n") + "\r\n";
+}
+function loadCSVText(text) {
+  const table = parseCSV(text);
+  columns = table.length ? table[0].map(h => h.trim()) : DEFAULT_COLUMNS;
+  for (const c of DEFAULT_COLUMNS) if (!columns.includes(c)) columns.push(c);
+  rows = table.slice(1).map((r, i) => {
+    const data = Object.fromEntries(columns.map((c, j) => [c, (r[j] ?? "").trim()]));
+    data.status = (data.status || "pending").toLowerCase();
+    return { key: data.incident_id || `row-${i}`, data, original: JSON.stringify(data), isNew: false };
+  });
+  selected.clear();
+}
+
+// ---------- GitHub ----------
+function b64ToText(b64) {
+  const bin = atob(b64.replace(/\s/g, ""));
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+}
+function textToB64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function apiUrl() {
+  return `https://api.github.com/repos/${encodeURIComponent(conn.owner)}/${encodeURIComponent(conn.repo)}/contents/${CSV_PATH}`;
+}
+function headers() {
+  return { Authorization: `Bearer ${conn.token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+}
+async function explain(res) {
+  if (res.status === 401) return "GitHub rejected the access key. Check it was copied correctly and hasn't expired.";
+  if (res.status === 403) return "The access key isn't allowed to do this. It needs Contents: Read and write for this repository.";
+  if (res.status === 404) return "Couldn't find the file. Check the username and repository name, and that the key has access to this repository.";
+  let detail = "";
+  try { detail = (await res.json()).message || ""; } catch (e) {}
+  return `GitHub returned an error (${res.status}). ${detail}`;
+}
+async function fetchRemote() {
+  if (DEMO) {
+    const res = await fetch(`data/incidents.csv?t=${Date.now()}`, { cache: "no-store" });
+    return { text: await res.text(), sha: "demo" };
+  }
+  const res = await fetch(`${apiUrl()}?ref=${BRANCH}&t=${Date.now()}`, { headers: headers(), cache: "no-store" });
+  if (!res.ok) throw new Error(await explain(res));
+  const json = await res.json();
+  return { text: b64ToText(json.content || ""), sha: json.sha };
+}
+
+// ---------- state helpers ----------
+const isChanged = r => r.isNew || JSON.stringify(r.data) !== r.original;
+const changedRows = () => rows.filter(isChanged);
+function setStatus(msg, kind = "") { const el = $("status"); el.textContent = msg; el.className = kind; }
+
+function counts() {
+  const c = { pending: 0, published: 0, rejected: 0, all: rows.length };
+  for (const r of rows) if (c[r.data.status] !== undefined) c[r.data.status]++;
+  return c;
+}
+function visibleRows() {
+  const q = query.trim().toLowerCase();
+  return rows
+    .filter(r => filter === "all" || r.data.status === filter || (r.isNew && filter !== "rejected"))
+    .filter(r => !q || ["location", "neighbourhood", "summary", "vehicle_type", "incident_date", "victim_type", "sources"].some(c => (r.data[c] || "").toLowerCase().includes(q)))
+    .sort((a, b) => (b.isNew - a.isNew) || (b.data.incident_date || "").localeCompare(a.data.incident_date || ""));
+}
+
+// ---------- rendering ----------
+function options(list, value) {
+  const all = list.includes(value) || !value ? list : [...list, value];
+  return all.map(v => `<option value="${esc(v)}"${v === value ? " selected" : ""}>${esc(v)}</option>`).join("");
+}
+function sourceLinks(s) {
+  return (s || "").split(" | ").map(part => {
+    const at = part.indexOf("http");
+    if (at < 0) return "";
+    const name = part.slice(0, at).replace(/:\s*$/, "").trim() || "Source";
+    const url = part.slice(at).trim();
+    return /^https?:\/\//.test(url) ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(url)}">${esc(name)}</a>` : "";
+  }).join("");
+}
+function renderRow(r) {
+  const d = r.data;
+  return `
+  <tr data-key="${esc(r.key)}" class="${isChanged(r) ? "changed" : ""} ${r.isNew ? "is-new" : ""}">
+    <td class="check"><input type="checkbox" data-select ${selected.has(r.key) ? "checked" : ""} aria-label="Select row"></td>
+    <td class="w-status"><select class="status ${esc(d.status)}" data-field="status" aria-label="Status">${options(STATUSES, d.status)}</select></td>
+    <td class="w-date"><input type="date" data-field="incident_date" value="${esc(d.incident_date)}" aria-label="Date"></td>
+    <td class="w-type"><select class="type ${esc(d.victim_type)}" data-field="victim_type" aria-label="Type">${options(TYPES, d.victim_type)}</select></td>
+    <td class="w-age"><input type="number" min="0" max="120" data-field="victim_age" value="${esc(d.victim_age)}" aria-label="Age"></td>
+    <td class="w-gender"><input type="text" data-field="victim_gender" value="${esc(d.victim_gender)}" aria-label="Gender" list="genders"></td>
+    <td class="w-loc">
+      <input type="text" data-field="location" value="${esc(d.location)}" aria-label="Location" placeholder="Location">
+      <input type="text" data-field="neighbourhood" value="${esc(d.neighbourhood)}" aria-label="Neighbourhood" placeholder="Neighbourhood">
+    </td>
+    <td class="w-vehicle"><input type="text" data-field="vehicle_type" value="${esc(d.vehicle_type)}" aria-label="Vehicle"></td>
+    <td class="w-summary"><textarea rows="3" data-field="summary" aria-label="Summary">${esc(d.summary)}</textarea>
+      <div class="meta">${d.confidence ? `Confidence: ${esc(d.confidence)} · ` : ""}${esc(d.incident_id)}</div></td>
+    <td class="w-src sources">${sourceLinks(d.sources)}
+      <details><summary>Edit sources</summary>
+        <textarea rows="4" data-field="sources" data-sources aria-label="Sources">${esc((d.sources || "").split(" | ").filter(Boolean).join("\n"))}</textarea>
+        <div class="meta">One per line: Outlet: https://…</div>
+      </details></td>
+  </tr>`;
+}
+function render() {
+  const c = counts();
+  document.querySelectorAll("[data-count]").forEach(el => el.textContent = `(${c[el.dataset.count]})`);
+  const list = visibleRows();
+  $("table").innerHTML = list.length ? `
+    <table>
+      <thead><tr><th></th><th>Status</th><th>Date</th><th>Type</th><th>Age</th><th>Gender</th><th>Location / neighbourhood</th><th>Vehicle</th><th>What happened</th><th>Sources</th></tr></thead>
+      <tbody>${list.map(renderRow).join("")}</tbody>
+    </table>
+    <datalist id="genders"><option value="woman"><option value="man"><option value="girl"><option value="boy"><option value="non-binary"></datalist>`
+    : `<p class="empty">Nothing here.</p>`;
+  updateChrome();
+}
+function updateChrome() {
+  const n = changedRows().length;
+  $("save").disabled = n === 0;
+  $("save").textContent = n ? `Save ${n} change${n === 1 ? "" : "s"}` : "Save changes";
+  $("bulk").classList.toggle("show", selected.size > 0);
+  $("bulk-count").textContent = `${selected.size} selected:`;
+}
+function refreshRow(tr, r) {
+  tr.classList.toggle("changed", isChanged(r));
+  const s = tr.querySelector("select.status"); s.className = `status ${r.data.status}`;
+  const t = tr.querySelector("select.type"); t.className = `type ${r.data.victim_type}`;
+  updateChrome();
+}
+
+// ---------- events ----------
+$("table").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-key]");
+  if (!tr) return;
+  const r = rows.find(x => x.key === tr.dataset.key);
+  if (e.target.matches("[data-select]")) return;
+  const field = e.target.dataset.field;
+  if (!r || !field) return;
+  let value = e.target.value;
+  if (e.target.matches("[data-sources]")) value = value.split("\n").map(s => s.trim()).filter(Boolean).join(" | ");
+  r.data[field] = value;
+  r.data.last_updated = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  refreshRow(tr, r);
+});
+$("table").addEventListener("change", e => {
+  if (e.target.matches("[data-select]")) {
+    const key = e.target.closest("tr").dataset.key;
+    e.target.checked ? selected.add(key) : selected.delete(key);
+    updateChrome();
+  }
+});
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  filter = b.dataset.filter;
+  document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  render();
+}));
+$("search").addEventListener("input", e => { query = e.target.value; render(); });
+document.querySelectorAll("[data-bulk]").forEach(b => b.addEventListener("click", () => {
+  const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  for (const r of rows) if (selected.has(r.key)) { r.data.status = b.dataset.bulk; r.data.last_updated = stamp; }
+  selected.clear();
+  render();
+  setStatus("Status changed. Remember to save.");
+}));
+$("clear-selection").addEventListener("click", () => { selected.clear(); render(); });
+
+$("add").addEventListener("click", () => {
+  const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  const data = Object.fromEntries(columns.map(c => [c, ""]));
+  Object.assign(data, { status: "pending", victim_type: "unknown", location: "", confidence: "manual", first_seen: stamp, last_updated: stamp });
+  const key = `new-${++newCounter}`;
+  rows.unshift({ key, data, original: "", isNew: true });
+  if (filter === "rejected") { filter = "all"; document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-pressed", x.dataset.filter === "all" ? "true" : "false")); }
+  render();
+  document.querySelector(`tr[data-key="${key}"] input[type=date]`)?.focus();
+  setStatus("New incident added at the top. Fill it in, set its status, then save.");
+});
+
+function slug(s) { return (s || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "unknown"; }
+function assignIds() {
+  const taken = new Set(rows.filter(r => !r.isNew).map(r => r.data.incident_id));
+  for (const r of rows) if (r.isNew && !r.data.incident_id) {
+    const base = `${r.data.incident_date || new Date().toISOString().slice(0, 10)}-${slug(r.data.location)}`;
+    let id = base, n = 2;
+    while (taken.has(id)) id = `${base}-${n++}`;
+    r.data.incident_id = id; taken.add(id);
+  }
+}
+
+async function load(keepEdits = false) {
+  const edits = keepEdits ? changedRows().map(r => ({ ...r, data: { ...r.data } })) : [];
+  setStatus("Loading…");
+  const remote = await fetchRemote();
+  sha = remote.sha;
+  loadCSVText(remote.text);
+  // Re-apply unsaved edits on top of the latest version (used after a save conflict).
+  for (const e of edits) {
+    if (e.isNew) { rows.unshift(e); continue; }
+    const r = rows.find(x => x.key === e.key);
+    if (r) r.data = e.data;
+  }
+  render();
+  setStatus(keepEdits ? "" : `Loaded ${rows.length} incident${rows.length === 1 ? "" : "s"}.`, keepEdits ? "" : "ok");
+}
+
+$("save").addEventListener("click", async () => {
+  const n = changedRows().length;
+  if (!n) return;
+  const missing = rows.filter(r => r.isNew && !r.data.incident_date);
+  if (missing.length) { setStatus("Every new incident needs a date before saving.", "error"); return; }
+  assignIds();
+  const text = toCSV();
+  if (DEMO) {
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([text], { type: "text/csv" })), download: "incidents.csv" });
+    a.click();
+    setStatus("Demo mode: downloaded the edited file instead of saving to GitHub.", "ok");
+    return;
+  }
+  $("save").disabled = true;
+  setStatus("Saving to GitHub…");
+  try {
+    const res = await fetch(apiUrl(), {
+      method: "PUT",
+      headers: { ...headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({ message: `Edit ${n} incident${n === 1 ? "" : "s"} in the incident editor`, content: textToB64(text), sha, branch: BRANCH }),
+    });
+    if (res.status === 409 || res.status === 422) {
+      await load(true);
+      setStatus("The tracker updated the table while you were editing. Your changes are kept on top of the latest version: check them, then click Save again.", "error");
+      return;
+    }
+    if (!res.ok) throw new Error(await explain(res));
+    const json = await res.json();
+    sha = json.content.sha;
+    for (const r of rows) { r.original = JSON.stringify(r.data); r.isNew = false; r.key = r.data.incident_id || r.key; }
+    render();
+    setStatus(`Saved ${n} change${n === 1 ? "" : "s"}. The public page updates in about a minute.`, "ok");
+  } catch (err) {
+    setStatus(err.message, "error");
+    updateChrome();
+  }
+});
+
+$("reload").addEventListener("click", async () => {
+  if (changedRows().length && !confirm("Discard your unsaved changes and reload?")) return;
+  try { await load(); } catch (err) { setStatus(err.message, "error"); }
+});
+
+// ---------- connect ----------
+function guessRepo() {
+  const host = location.hostname;
+  if (host.endsWith(".github.io")) return { owner: host.split(".")[0], repo: location.pathname.split("/").filter(Boolean)[0] || "" };
+  return { owner: "", repo: "" };
+}
+function start(c) {
+  conn = c;
+  $("connect-box").hidden = true;
+  $("editor").hidden = false;
+  load().catch(err => {
+    setStatus(err.message, "error");
+    $("connect-box").hidden = false;
+  });
+}
+$("connect-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const c = { token: $("token").value.trim(), owner: $("owner").value.trim(), repo: $("repo").value.trim() };
+  if ($("remember").checked) localStorage.setItem("incidentEditor", JSON.stringify(c));
+  else localStorage.removeItem("incidentEditor");
+  start(c);
+});
+$("forget").addEventListener("click", () => {
+  localStorage.removeItem("incidentEditor");
+  location.reload();
+});
+window.addEventListener("beforeunload", e => { if (changedRows().length) { e.preventDefault(); e.returnValue = ""; } });
+
+(function init() {
+  const g = guessRepo();
+  $("owner").value = g.owner;
+  $("repo").value = g.repo;
+  if (DEMO) { start({ token: "", owner: "demo", repo: "demo" }); return; }
+  try {
+    const saved = JSON.parse(localStorage.getItem("incidentEditor") || "null");
+    if (saved && saved.token) { $("remember").checked = true; start(saved); }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
