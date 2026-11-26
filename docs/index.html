@@ -313,7 +313,6 @@ function renderFeed() {
       <tr>
         <td class="date">${esc(dateText)}</td>
         <td><span class="tag ${typeClass(r.victim_type)}">${esc(r.victim_type || "unknown")}</span></td>
-        <td class="victim">${esc(describeVictim(r))}</td>
         <td data-label="Location">${esc(location)}${r.neighbourhood ? `<div class="sub">${esc(r.neighbourhood)}</div>` : ""}</td>
         <td data-label="Vehicle">${esc(r.vehicle_type)}</td>
         <td class="summary">${esc(r.summary)}</td>
@@ -324,7 +323,7 @@ function renderFeed() {
   feed.innerHTML = `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Type</th><th>Victim</th><th>Location</th><th>Vehicle</th><th>What happened</th><th>Sources</th></tr></thead>
+        <thead><tr><th>Date</th><th>Type</th><th>Location</th><th>Vehicle</th><th>What happened</th><th>Sources</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>`;
@@ -332,7 +331,7 @@ function renderFeed() {
 
 function showData(csvText) {
   allRows = parseCSV(csvText)
-    .filter(r => r.status === "published")
+    .filter(r => (r.status || "").trim().toLowerCase() === "published")
     .sort((a, b) => (b.incident_date || "").localeCompare(a.incident_date || ""));
   renderDaysSince(allRows);
   renderStats(allRows);
