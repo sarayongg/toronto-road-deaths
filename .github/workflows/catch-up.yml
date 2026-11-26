@@ -18,9 +18,9 @@ on:
           - Police releases and news
         default: Police releases only
       publish_immediately:
-        description: "Publish what it finds straight away (skip review)"
+        description: "Publish what it finds straight away (untick to keep them pending for review)"
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write # save the updated spreadsheet
