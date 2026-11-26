@@ -1,0 +1,60 @@
+# Runs the news agent every hour and saves any new incidents to docs/data/incidents.csv.
+# You can also run it by hand: Actions tab -> "Update feed" -> "Run workflow".
+name: Update feed
+
+on:
+  schedule:
+    - cron: "17 * * * *" # every hour at :17 (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write # save the updated spreadsheet
+  issues: write # open a "please review" issue when something new is found
+
+concurrency:
+  group: update-feed
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements.txt
+
+      - name: Install
+        run: pip install -r agent/requirements.txt
+
+      - name: Find and read new articles
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEW_INCIDENTS_REPORT: ${{ runner.temp }}/new_incidents.md
+        run: python agent/run.py
+
+      - name: Save changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data/incidents.csv agent/state/seen_articles.json
+          if git diff --cached --quiet; then
+            echo "Nothing new."
+            exit 0
+          fi
+          git commit -m "Update incidents feed"
+          git pull --rebase
+          git push
+
+      - name: Open a review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/new_incidents.md
+        run: |
+          if [ -s "$REPORT" ]; then
+            gh issue create --title "New incident(s) to review - $(date -u +%Y-%m-%d)" --body-file "$REPORT"
+          fi
