@@ -135,6 +135,8 @@
   td.summary { min-width: 26rem; width: 40%; }
   td.sources { width: 9.5rem; max-width: 9.5rem; }
   td[data-label="Location"] { min-width: 9.5rem; }
+  td.type { width: 1%; }
+  td.type .tag { white-space: normal; line-height: 1.35; }
   td.victim { font-family: var(--display); font-size: 1.1rem; font-weight: 500; line-height: 1.25; }
   .tag {
     display: inline-block; font-weight: 700; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
@@ -179,6 +181,7 @@
     td.summary { min-width: 0; width: 100%; margin-top: 6px; }
     td.sources { max-width: none; }
     td[data-label="Location"] { min-width: 0; }
+    td.type { width: 100%; }
     .sources a { max-width: 100%; }
   }
   @media (prefers-reduced-motion: no-preference) {
@@ -343,7 +346,7 @@ function renderFeed() {
     return `
       <tr>
         <td class="date">${esc(dateText)}</td>
-        <td><span class="tag ${typeClass(r.victim_type)}">${esc(r.victim_type || "unknown")}</span></td>
+        <td class="type"><span class="tag ${typeClass(r.victim_type)}">${esc(r.victim_type || "unknown")}</span></td>
         <td class="victim${describeVictim(r) === "Not reported" ? " unknown" : ""}" data-label="Victim">${esc(describeVictim(r))}</td>
         <td data-label="Location">${esc(location)}${r.neighbourhood ? `<div class="sub">${esc(r.neighbourhood)}</div>` : ""}</td>
         <td data-label="Vehicle">${esc(r.vehicle_type)}</td>
