@@ -1,0 +1,87 @@
+# One-time (or occasional) catch-up: finds deaths from a start date until today.
+# Run it by hand: Actions tab -> "Catch up on past deaths" -> "Run workflow".
+# If it stops early (time or article limit), run it again: it carries on where it left off.
+name: Catch up on past deaths
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Find deaths from this date onward (YYYY-MM-DD)"
+        required: true
+        default: "2026-01-01"
+      sources:
+        description: "What to search"
+        type: choice
+        options:
+          - Police releases only
+          - Police releases and news
+        default: Police releases only
+      publish_immediately:
+        description: "Publish what it finds straight away (skip review)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # save the updated spreadsheet
+  issues: write # open a "please review" issue
+  actions: write # start "Publish website" when done
+
+concurrency:
+  group: update-feed # the hourly run waits until this finishes
+  cancel-in-progress: false
+
+jobs:
+  catch-up:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements.txt
+
+      - name: Install
+        run: pip install -r agent/requirements.txt
+
+      - name: Find and read past articles
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEW_INCIDENTS_REPORT: ${{ runner.temp }}/new_incidents.md
+          BACKFILL_FROM: ${{ inputs.start_date }}
+          BACKFILL_PUBLISH: ${{ inputs.publish_immediately }}
+          BACKFILL_SOURCES: ${{ inputs.sources }}
+        run: python agent/run.py
+
+      - name: Save changes
+        if: always() # keep whatever was found, even if the run stopped early
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data/incidents.csv agent/state/seen_articles.json
+          if git diff --cached --quiet; then
+            echo "Nothing new."
+            exit 0
+          fi
+          git commit -m "Catch-up: add past incidents"
+          git pull --rebase
+          git push
+
+      - name: Open a review issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/new_incidents.md
+        run: |
+          if [ -s "$REPORT" ]; then
+            gh issue create --title "Catch-up: past incident(s) to review - $(date -u +%Y-%m-%d)" --body-file "$REPORT"
+          fi
+
+      - name: Publish the website
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish-site.yml --ref main
