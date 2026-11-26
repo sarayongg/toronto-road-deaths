@@ -32,6 +32,7 @@
     background: var(--yellow);
     min-height: 100vh;
     overflow-x: clip;
+    display: flex; flex-direction: column;
   }
   /* hazard tape along the top */
   body::before {
@@ -39,7 +40,7 @@
     border-bottom: 3px solid var(--black);
   }
 
-  main { max-width: 1120px; margin: 0 auto; padding: 56px 20px 64px; }
+  main { flex: 1 0 auto; width: 100%; max-width: 1120px; margin: 0 auto; padding: 56px 20px 64px; }
 
   /* ---------- the sign ---------- */
   .sign {
@@ -91,20 +92,23 @@
     background: var(--black); color: var(--paper);
     padding: 6px 12px; font-weight: 700; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase;
   }
-  .titlebar .lines {
-    flex: 1; height: 12px;
-    background: repeating-linear-gradient(to bottom, var(--paper) 0 2px, transparent 2px 4px);
-  }
-  .titlebar .x { font-size: 1.1rem; line-height: 1; }
 
   .about { display: grid; grid-template-columns: 1.4fr 1fr; gap: 28px; margin: 72px 0 40px; }
   .about .body { padding: 18px 20px; }
   .about p { margin: 0; }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; }
-  .stat { padding: 16px 8px; border-right: 3px solid var(--black); }
-  .stat:last-child { border-right: 0; }
-  .stat b { display: block; font-family: var(--display); font-size: 2.6rem; line-height: 1; }
-  .stat span { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
+  .about .window { display: flex; flex-direction: column; }
+  .stats { flex: 1; display: flex; flex-direction: column; }
+  .stat-total { flex: 1; display: flex; align-items: center; gap: 16px; padding: 14px 20px; }
+  .stat-total b { font-family: var(--display); font-size: clamp(3rem, 7vw, 4rem); line-height: .9; }
+  .stat-total span { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; line-height: 1.3; }
+  .stat-split { display: grid; grid-template-columns: 1fr 1fr; border-top: 3px solid var(--black); }
+  .stat { display: flex; align-items: baseline; gap: 8px; padding: 10px 20px; }
+  .stat + .stat { border-left: 3px solid var(--black); }
+  .stat b { font-family: var(--display); font-size: 1.6rem; line-height: 1; }
+  .stat span { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+  .stat .dot { width: 10px; height: 10px; flex: none; align-self: center; }
+  .stat .dot.pedestrian { background: var(--ped); }
+  .stat .dot.cyclist { background: var(--cyc); }
 
   .filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
   .filters button {
@@ -118,7 +122,7 @@
   .filters button:focus-visible { outline: 3px solid var(--cyc); outline-offset: 3px; }
 
   .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  table { width: 100%; min-width: 980px; border-collapse: collapse; font-size: .85rem; }
   th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 2px solid var(--black); }
   th {
     font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
@@ -138,10 +142,22 @@
   .sub { color: var(--muted); font-size: .78rem; }
   .sources a { color: var(--black); white-space: nowrap; }
   .sources a:hover { background: var(--yellow); }
+  .sources details { margin-top: 2px; }
+  .sources summary { cursor: pointer; font-weight: 700; font-size: .78rem; white-space: nowrap; list-style: none; text-decoration: underline; }
+  .sources summary::-webkit-details-marker { display: none; }
+  .sources details[open] summary { display: none; }
+  td.victim { white-space: nowrap; }
+  td.victim.unknown { font-family: var(--mono); font-size: .85rem; font-weight: 400; color: var(--muted); }
   .empty, .error { padding: 28px 20px; margin: 0; font-weight: 700; text-transform: uppercase; }
 
   footer { background: var(--black); color: #fff; font-size: .8rem; }
-  footer p { max-width: 1120px; margin: 0 auto; padding: 22px 20px; }
+  footer { width: 100%; margin: 0; }
+  footer .inner {
+    max-width: 1120px; margin: 0 auto; padding: 22px 20px;
+    display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 32px; flex-wrap: wrap;
+  }
+  footer p { margin: 0; max-width: 72ch; }
+  footer .credit { font-weight: 700; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
 
   @media (max-width: 720px) {
     main { padding-top: 40px; }
@@ -149,6 +165,7 @@
     .about { grid-template-columns: 1fr; margin-top: 56px; }
     thead { display: none; }
     table, tbody, tr, td { display: block; width: 100%; }
+    table { min-width: 0; }
     tr { padding: 14px 16px; border-bottom: 2px solid var(--black); }
     tbody tr:last-child { border-bottom: 0; }
     td { border: 0; padding: 2px 0; }
@@ -176,13 +193,13 @@
 
   <section class="about">
     <div class="window">
-      <div class="titlebar"><span>README.TXT</span><span class="lines"></span></div>
+      <div class="titlebar"><span>ABOUT THIS TRACKER</span></div>
       <div class="body">
         <p>A running record of people <mark>killed while walking or cycling</mark> in the City of Toronto, compiled from news reports and Toronto Police releases. Each entry is checked by a person before it appears here.</p>
       </div>
     </div>
     <div class="window">
-      <div class="titlebar"><span id="stats-title">THIS YEAR</span><span class="lines"></span></div>
+      <div class="titlebar"><span id="stats-title">THIS YEAR</span></div>
       <div class="stats" id="stats" aria-live="polite"></div>
     </div>
   </section>
@@ -194,13 +211,16 @@
   </div>
 
   <section class="window">
-    <div class="titlebar"><span>INCIDENTS.CSV</span><span class="lines"></span><span class="x" aria-hidden="true">×</span></div>
+    <div class="titlebar"><span>INCIDENTS</span></div>
     <div id="feed" aria-live="polite"><p class="empty">Loading…</p></div>
   </section>
 </main>
 
 <footer>
-  <p>Compiled from public news coverage and Toronto Police Service news releases. Figures reflect deaths reported publicly and may differ from official data. <span id="updated"></span></p>
+  <div class="inner">
+    <p>Compiled from public news coverage and Toronto Police Service news releases. Figures reflect deaths reported publicly and may differ from official data. <span id="updated"></span></p>
+    <p class="credit">Created by Sara Yong</p>
+  </div>
 </footer>
 
 <script>
@@ -243,25 +263,28 @@ function parseDate(s) {
 }
 
 function describeVictim(r) {
-  const type = r.victim_type === "unknown" || !r.victim_type ? "Person" : r.victim_type;
+  // Gender and age only, e.g. "Woman, 71". Names are not shown on the site.
   const bits = [];
-  if (r.victim_gender) bits.push(r.victim_gender);
+  if (r.victim_gender) bits.push(r.victim_gender.charAt(0).toUpperCase() + r.victim_gender.slice(1));
   if (r.victim_age) bits.push(r.victim_age);
-  const detail = bits.join(", ");
-  if (r.victim_name) return detail ? `${r.victim_name}, ${detail}` : r.victim_name;
-  if (detail) return detail.charAt(0).toUpperCase() + detail.slice(1);
-  return type.charAt(0).toUpperCase() + type.slice(1);
+  return bits.length ? bits.join(", ") : "Not reported";
 }
 
+const SOURCES_SHOWN = 2;
+
 function renderSources(s) {
-  return (s || "").split(" | ").map(part => {
+  const links = (s || "").split(" | ").map(part => {
     const at = part.indexOf("http");
     if (at < 0) return null;
     const name = part.slice(0, at).replace(/:\s*$/, "").trim() || "Source";
     const url = part.slice(at).trim();
     if (!/^https?:\/\//.test(url)) return null;
     return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(name)}</a>`;
-  }).filter(Boolean).join("<br>");
+  }).filter(Boolean);
+  if (links.length <= SOURCES_SHOWN + 1) return links.join("<br>");
+  const extra = links.length - SOURCES_SHOWN;
+  return links.slice(0, SOURCES_SHOWN).join("<br>") +
+    `<details><summary>+${extra} more</summary>${links.slice(SOURCES_SHOWN).join("<br>")}</details>`;
 }
 
 function typeClass(t) {
@@ -275,9 +298,11 @@ function renderStats(rows) {
   const cyc = thisYear.filter(r => r.victim_type === "cyclist").length;
   document.getElementById("stats-title").textContent = `KILLED IN ${year}`;
   document.getElementById("stats").innerHTML = `
-    <div class="stat"><b>${thisYear.length}</b><span>Total</span></div>
-    <div class="stat"><b>${ped}</b><span>Walking</span></div>
-    <div class="stat"><b>${cyc}</b><span>Cycling</span></div>`;
+    <div class="stat-total"><b>${thisYear.length}</b><span>Total deaths</span></div>
+    <div class="stat-split">
+      <div class="stat"><span class="dot pedestrian" aria-hidden="true"></span><b>${ped}</b><span>Walking</span></div>
+      <div class="stat"><span class="dot cyclist" aria-hidden="true"></span><b>${cyc}</b><span>Cycling</span></div>
+    </div>`;
 }
 
 function renderDaysSince(rows) {
@@ -295,9 +320,8 @@ function renderDaysSince(rows) {
     showTiles(days, `${days} days`);
     daysEl.dataset.value = days;
   }
-  const where = latest.r.location && latest.r.location !== "Unknown" ? ` · ${latest.r.location}` : "";
   sinceEl.textContent = "Last death: " +
-    latest.d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) + where;
+    latest.d.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 }
 
 function renderFeed() {
@@ -313,6 +337,7 @@ function renderFeed() {
       <tr>
         <td class="date">${esc(dateText)}</td>
         <td><span class="tag ${typeClass(r.victim_type)}">${esc(r.victim_type || "unknown")}</span></td>
+        <td class="victim${describeVictim(r) === "Not reported" ? " unknown" : ""}" data-label="Victim">${esc(describeVictim(r))}</td>
         <td data-label="Location">${esc(location)}${r.neighbourhood ? `<div class="sub">${esc(r.neighbourhood)}</div>` : ""}</td>
         <td data-label="Vehicle">${esc(r.vehicle_type)}</td>
         <td class="summary">${esc(r.summary)}</td>
@@ -323,7 +348,7 @@ function renderFeed() {
   feed.innerHTML = `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Type</th><th>Location</th><th>Vehicle</th><th>What happened</th><th>Sources</th></tr></thead>
+        <thead><tr><th>Date</th><th>Type</th><th>Victim</th><th>Location</th><th>Vehicle</th><th>What happened</th><th>Sources</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>`;
