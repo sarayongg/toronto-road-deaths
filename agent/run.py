@@ -1,7 +1,7 @@
 """
 Toronto pedestrian & cyclist deaths tracker.
 
-What this does, every time it runs (GitHub runs it hourly for you):
+What this does, every time it runs (GitHub runs it twice a day for you):
   1. Reads news feeds (Google News searches + local outlets).
   2. Skips articles it has already looked at.
   3. Skips headlines that clearly aren't about a pedestrian/cyclist death.
@@ -9,12 +9,15 @@ What this does, every time it runs (GitHub runs it hourly for you):
        - Is this a pedestrian or cyclist killed in the City of Toronto?
        - Is it a death we already have (another outlet's story), or a new one?
        - What are the details (date, location, victim, vehicle)?
-  5. Saves the results to docs/data/incidents.csv, which the webpage reads.
+  5. Once a day, checks the City of Toronto's official collision data: confirms
+     deaths already recorded and adds any the news missed.
+  6. Saves the results to docs/data/incidents.csv, which the webpage reads.
 
 You normally only need to change the SETTINGS section below.
 """
 
 import csv
+import io
 import json
 import os
 import re
@@ -81,6 +84,15 @@ POLICE_ALL_RELEASES_URL = (
     "?q=&unit=&division=&category="
 )
 
+# City of Toronto open data: "Motor Vehicle Collisions Involving Killed or
+# Seriously Injured Persons" (police collision reports, updated daily, usually
+# 1-3 weeks behind). Used to confirm deaths already in the table and to add
+# deaths the news missed. Checked once a day, by the scheduled run in the
+# 6 hours from CITY_DATA_HOUR_UTC.
+READ_CITY_DATA = True
+CITY_DATA_SINCE = "2026-01-01"  # only look at City records from this date on
+CITY_DATA_HOUR_UTC = 14  # the City refreshes the data around 13:00 UTC
+
 # --- Catch-up run (the "Catch up on past deaths" workflow) -------------------
 # Limits for one catch-up run. If it stops early, just run it again: it skips
 # everything it has already read and carries on.
@@ -120,6 +132,7 @@ COLUMNS = [
     "confidence",
     "first_seen",
     "last_updated",
+    "city_record",  # matching City of Toronto collision record (filled automatically)
 ]
 
 USER_AGENT = "Mozilla/5.0 (compatible; TorontoStreetSafetyFeed/1.0)"
@@ -395,6 +408,261 @@ def collect_police_releases(seen: dict, start: Optional[date] = None) -> list[di
     return list(found.values())
 
 
+# =============================================================================
+# City of Toronto collision data (official record)
+# =============================================================================
+
+CITY_API = "https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action/package_show"
+CITY_DATASET = "motor-vehicle-collisions-involving-killed-or-seriously-injured-persons"
+CITY_PAGE = f"https://open.toronto.ca/dataset/{CITY_DATASET}/"
+CITY_SOURCE_NAME = "City of Toronto collision data"
+CITY_SOURCE = f"{CITY_SOURCE_NAME}: {CITY_PAGE}"
+
+CITY_ROAD_USERS = {
+    "pedestrian": "pedestrian",
+    "cyclist": "cyclist",
+    "other_micromobility": "e-scooter or mobility device",
+}
+CITY_VEHICLES = {
+    "Automobile or Station Wagon": "car",
+    "Municipal Transit Bus (TTC)": "TTC bus",
+    "Truck - Dump": "dump truck",
+    "Truck - Tractor": "tractor-trailer",
+    "Truck - Long Combination Vehicle": "tractor-trailer",
+    "Truck - Closed": "truck",
+    "Truck - Open (Flatbed)": "flatbed truck",
+    "Truck - Tank": "tanker truck",
+    "Truck - Other": "truck",
+    "Light Rail Transit (LRT)": "LRT train",
+}
+STREET_WORDS = {
+    "AVE": "Ave", "AV": "Ave", "AVR": "Ave", "AVENUE": "Ave", "ST": "St", "STREET": "St", "RD": "Rd", "ROAD": "Rd",
+    "DR": "Dr", "BLVD": "Blvd", "BV": "Blvd", "CRES": "Cres", "CRCL": "Crcl", "PKWY": "Pkwy",
+    "TRL": "Trl", "GT": "Gate", "WY": "Way", "E": "E", "W": "W", "N": "N", "S": "S",
+}
+STREET_NOISE = set(w.lower() for w in STREET_WORDS) | {"east", "west", "north", "south", "the", "and"}
+
+
+def pretty_street(name: str) -> str:
+    words = (name or "").split()
+    return " ".join(STREET_WORDS.get(w.upper(), w.capitalize()) for w in words)
+
+
+def street_words(name: str) -> list[str]:
+    """'LAWRENCE AVE E' -> ['lawrence'], 'LAKE SHORE BLVD W' -> ['lake', 'shore']."""
+    return [w for w in re.findall(r"[a-z]+", (name or "").lower()) if w not in STREET_NOISE and len(w) >= 4]
+
+
+def city_download_url() -> str:
+    resp = requests.get(CITY_API, params={"id": CITY_DATASET}, timeout=30, headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
+    for res in resp.json()["result"]["resources"]:
+        if (res.get("format") or "").upper() == "CSV" and res.get("url", "").lower().endswith("4326.csv"):
+            return res["url"]
+    raise RuntimeError("couldn't find the CSV file in the City dataset")
+
+
+def load_city_deaths(since: date) -> list[dict]:
+    """Pedestrians, cyclists and micromobility users killed since `since`, one dict per person."""
+    resp = requests.get(city_download_url(), timeout=120, headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
+    resp.encoding = "utf-8-sig"
+    collisions: dict[str, list[dict]] = {}
+    for rec in csv.DictReader(io.StringIO(resp.text)):
+        if (rec.get("accdate") or "")[:10] >= since.isoformat():
+            collisions.setdefault(rec["collision_id"], []).append(rec)
+
+    deaths = []
+    for cid, people in collisions.items():
+        for p in people:
+            if p.get("injury") != "Fatal" or p.get("road_user") not in CITY_ROAD_USERS:
+                continue
+            others = [
+                o.get("vehtype") for o in people
+                if o is not p and o.get("vehtype") and o.get("vehtype") != "Unknown"
+                and (not p.get("veh_no") or o.get("veh_no") != p.get("veh_no"))
+            ]
+            vehicle = next(iter(dict.fromkeys(others)), "")
+            streets = [s for s in (p.get("stname1"), p.get("stname2")) if s]
+            age = p.get("invage") or ""
+            deaths.append({
+                "key": f"{cid}#{p.get('per_no')}",
+                "date": p["accdate"][:10],
+                "victim_type": CITY_ROAD_USERS[p["road_user"]],
+                "age": "" if age in ("", "0") else age,
+                "streets": streets,
+                "location": " and ".join(pretty_street(s) for s in streets) or "Unknown",
+                "neighbourhood": p.get("neighbourhood") or "",
+                "vehicle": CITY_VEHICLES.get(vehicle, vehicle.lower().replace(" (", ", ").rstrip(")")),
+                "has_other_vehicle": bool(others),
+            })
+    deaths.sort(key=lambda d: d["date"])
+    return deaths
+
+
+def city_summary(d: dict) -> str:
+    who = {"pedestrian": "pedestrian", "cyclist": "cyclist"}.get(d["victim_type"], "e-scooter or mobility device user")
+    who = f"{d['age']}-year-old {who}" if d["age"] else who
+    article = "An" if who[0] in "aeiou8" or who.startswith(("11", "18")) else "A"
+    a = "an" if d["vehicle"][:1].lower() in "aeiou" or d["vehicle"].startswith("LRT") else "a"
+    if d["victim_type"] == "pedestrian":
+        what = f"was struck and killed by {a} {d['vehicle']}" if d["vehicle"] else "was struck and killed"
+    else:
+        what = f"was killed in a collision with {a} {d['vehicle']}" if d["vehicle"] else "was killed in a collision"
+    if not d["streets"]:
+        where = ""
+    elif len(d["streets"]) == 2 or d["location"][:1].isdigit():  # an intersection or a street address
+        where = f" at {d['location']}"
+    else:
+        where = f" on {d['location']}"
+    return f"{article} {who} {what}{where}, according to City of Toronto collision data."
+
+
+def day_gap(a: str, b: str) -> int:
+    try:
+        return abs((date.fromisoformat(a[:10]) - date.fromisoformat(b[:10])).days)
+    except ValueError:
+        return 999
+
+
+def obvious_match(d: dict, candidates: list[dict]) -> Optional[dict]:
+    """A recorded incident within 3 days, same kind of victim, naming one of the same streets."""
+    streets = [w for w in (street_words(s) for s in d["streets"]) if w]
+    best = None
+    for r in candidates:
+        if r.get("victim_type") not in ("", "unknown", d["victim_type"]):
+            continue
+        if d["age"].isdigit() and (r.get("victim_age") or "").isdigit() and abs(int(d["age"]) - int(r["victim_age"])) > 2:
+            continue
+        text = re.sub(r"[^a-z]", "", f"{r.get('location')} {r.get('summary')}".lower())
+        if any(all(w in text for w in words) for words in streets):
+            if best is None or day_gap(r["incident_date"], d["date"]) < day_gap(best["incident_date"], d["date"]):
+                best = r
+    return best
+
+
+class CityMatch(BaseModel):
+    matches_incident_id: Optional[str] = Field(
+        description="incident_id of the recorded incident that is this same death, or null if none is."
+    )
+    reason: str = Field(description="One short sentence explaining the decision.")
+
+
+def ask_claude_city_match(client: anthropic.Anthropic, d: dict, candidates: list[dict]) -> Optional[str]:
+    listing = json.dumps([
+        {k: r.get(k) for k in ("incident_id", "incident_date", "victim_type", "victim_age",
+                               "victim_gender", "location", "neighbourhood", "summary")}
+        for r in candidates
+    ], indent=1)
+    record = {k: d[k] for k in ("date", "victim_type", "age", "location", "neighbourhood", "vehicle")}
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=4000,
+        system=(
+            "You match an official City of Toronto collision record to a list of deaths already "
+            "recorded from news coverage. Match only when the date, place and victim all plausibly "
+            "fit the same death (news dates can be a day or two after the collision). Two people "
+            "killed in the same crash are two different deaths. If unsure, return null."
+        ),
+        messages=[{"role": "user", "content": f"City record:\n{json.dumps(record)}\n\nRecorded incidents:\n{listing}"}],
+        output_format=CityMatch,
+    )
+    if response.stop_reason == "refusal" or not response.parsed_output:
+        return None
+    print(f"   Claude: {response.parsed_output.reason}")
+    return response.parsed_output.matches_incident_id
+
+
+def link_city_record(row: dict, d: dict) -> None:
+    row["city_record"] = d["key"]
+    if CITY_PAGE not in row["sources"]:
+        row["sources"] = f"{CITY_SOURCE} | {row['sources']}" if row["sources"] else CITY_SOURCE
+    row["incident_date"] = d["date"]  # the City's collision date is the official one
+    for col, value in [("victim_age", d["age"]), ("neighbourhood", d["neighbourhood"]), ("vehicle_type", d["vehicle"])]:
+        if not row.get(col) and value:
+            row[col] = value
+    if row.get("location") in ("", "Unknown") and d["location"] != "Unknown":
+        row["location"] = d["location"]
+    if row.get("victim_type") in ("", "unknown"):
+        row["victim_type"] = d["victim_type"]
+    row["last_updated"] = now_iso()
+
+
+def check_city_data(client: anthropic.Anthropic, rows: list[dict], since: date) -> list[dict]:
+    """Confirm recorded deaths against City data and add any it has that we don't. Returns new rows."""
+    try:
+        deaths = load_city_deaths(since)
+    except (requests.RequestException, RuntimeError, KeyError, ValueError) as err:
+        print(f"Couldn't read City of Toronto collision data, will try again next time: {err}")
+        return []
+    linked = {r.get("city_record") for r in rows if r.get("city_record")}
+    todo = [d for d in deaths if d["key"] not in linked]
+    print(f"City of Toronto data: {len(deaths)} pedestrian/cyclist death(s) since {since.isoformat()}, "
+          f"{len(todo)} not yet linked to an incident.")
+
+    new_rows = []
+    for d in todo:
+        print(f"- City record {d['date']} {d['victim_type']} {d['age'] or ''} at {d['location']}")
+        nearby = [r for r in rows if not r.get("city_record") and r.get("status") != "rejected" and day_gap(r.get("incident_date", ""), d["date"]) <= 4]
+        match = obvious_match(d, nearby)
+        if not match and nearby:
+            try:
+                match_id = ask_claude_city_match(client, d, nearby)
+            except (anthropic.APIStatusError, anthropic.APIConnectionError) as err:
+                print(f"   API error, will retry next time: {err}")
+                continue
+            match = next((r for r in nearby if r["incident_id"] == match_id), None)
+        if match:
+            link_city_record(match, d)
+            print(f"   Confirmed incident {match['incident_id']}")
+            continue
+
+        by_id = {r["incident_id"] for r in rows}
+        base_id = f"{d['date']}-{slugify(d['location'])}"
+        incident_id, n = base_id, 2
+        while incident_id in by_id:
+            incident_id, n = f"{base_id}-{n}", n + 1
+        stamp = now_iso()
+        # The dataset covers motor vehicle collisions, but a cyclist or scooter rider with
+        # no other vehicle listed may have fallen on their own: keep those pending for a
+        # person to decide. (Pedestrian records often lack the vehicle, e.g. hit-and-runs.)
+        unclear = d["victim_type"] != "pedestrian" and not d["has_other_vehicle"]
+        status = "published" if AUTO_PUBLISH and not unclear else "pending"
+        row = {
+            "incident_id": incident_id,
+            "status": status,
+            "incident_date": d["date"],
+            "victim_type": d["victim_type"],
+            "victim_name": "",
+            "victim_age": d["age"],
+            "victim_gender": "",
+            "location": d["location"],
+            "neighbourhood": d["neighbourhood"],
+            "vehicle_type": d["vehicle"],
+            "summary": city_summary(d),
+            "sources": CITY_SOURCE,
+            "confidence": "high",
+            "first_seen": stamp,
+            "last_updated": stamp,
+            "city_record": d["key"],
+        }
+        if unclear:
+            row["_note"] = "No other vehicle is listed in the City record, so this was kept pending."
+        rows.append(row)
+        new_rows.append(row)
+        print(f"   NEW incident from City data: {incident_id} ({status})")
+    return new_rows
+
+
+def city_check_due() -> bool:
+    if not READ_CITY_DATA:
+        return False
+    if BACKFILL_FROM or os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        return True  # catch-up runs and runs started by hand always check
+    # A window, not an exact hour, because GitHub often starts scheduled runs late.
+    return 0 <= datetime.now(timezone.utc).hour - CITY_DATA_HOUR_UTC < 6
+
+
 def fetch_article_text(url: str) -> str:
     """Try to read the article itself. Returns '' if the site won't allow it."""
     if "news.google.com" in url:
@@ -487,7 +755,9 @@ def apply_extraction(rows: list[dict], ex: Extraction, article: dict) -> Optiona
             row["victim_type"] = ex.victim_type
         # Replace a thin early summary with one from a more detailed article.
         rank = {"low": 0, "medium": 1, "high": 2}
-        if rank.get(ex.confidence, 0) > rank.get(row.get("confidence", ""), 0) and ex.summary:
+        # A summary built from City data alone is also replaced by the first article.
+        city_only = row["sources"].strip() == CITY_SOURCE or row["sources"].startswith(CITY_SOURCE) and row["sources"].count(" | ") == 1
+        if ex.summary and (city_only or rank.get(ex.confidence, 0) > rank.get(row.get("confidence", ""), 0)):
             row["summary"] = ex.summary
             row["confidence"] = ex.confidence
         row["last_updated"] = stamp
@@ -547,6 +817,7 @@ def write_report(new_rows: list[dict]) -> None:
             f"- ID: `{r['incident_id']}`",
             f"- Confidence: {r['confidence']}",
             f"- {r['summary']}",
+            *([f"- Status: **{r['status']}**. {r['_note']}"] if r.get("_note") else []),
             f"- Source: {r['sources'].split(' | ')[0]}",
             "",
         ]
@@ -587,18 +858,24 @@ def main() -> None:
         max_articles = BACKFILL_MAX_ARTICLES
         deadline = time.monotonic() + BACKFILL_MAX_MINUTES * 60
     else:
-        # ---- Normal hourly run: newest first ----
+        # ---- Normal scheduled run: newest first ----
         articles = collect_articles(seen) + collect_police_releases(seen)
         articles.sort(key=lambda a: a["published"], reverse=True)
         max_articles = MAX_ARTICLES_PER_RUN
         deadline = None
+
+    # Official City of Toronto collision data: once a day, and on every catch-up.
+    new_rows = []
+    if city_check_due():
+        since = min(date.fromisoformat(CITY_DATA_SINCE), start) if BACKFILL_FROM else date.fromisoformat(CITY_DATA_SINCE)
+        new_rows += check_city_data(client, rows, since)
+        save_incidents(rows)
 
     print(f"Found {len(articles)} new candidate article(s).")
     if len(articles) > max_articles:
         print(f"Reading {max_articles} this run; the rest wait for the next run.")
         articles = articles[:max_articles]
 
-    new_rows = []
     for i, article in enumerate(articles, 1):
         if deadline and time.monotonic() > deadline:
             print("Time limit reached. Progress is saved: run the catch-up again to continue.")
