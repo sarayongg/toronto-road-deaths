@@ -169,7 +169,7 @@ const CSV_PATH = "docs/data/incidents.csv";
 const BRANCH = "main";
 const STATUSES = ["pending", "published", "rejected"];
 const TYPES = ["pedestrian", "cyclist", "e-scooter or mobility device", "unknown"];
-const DEFAULT_COLUMNS = ["incident_id","status","incident_date","victim_type","victim_name","victim_age","victim_gender","location","neighbourhood","vehicle_type","summary","sources","confidence","first_seen","last_updated"];
+const DEFAULT_COLUMNS = ["incident_id","status","incident_date","victim_type","victim_name","victim_age","victim_gender","location","neighbourhood","vehicle_type","summary","sources","confidence","first_seen","last_updated","city_record"];
 const DEMO = new URLSearchParams(location.search).has("demo"); // local testing only: loads data/incidents.csv, saving downloads a file
 
 let conn = null;          // { token, owner, repo }
@@ -243,13 +243,14 @@ function apiUrl() {
 function headers() {
   return { Authorization: `Bearer ${conn.token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
 }
-async function explain(res) {
-  if (res.status === 401) return "GitHub rejected the access key. Check it was copied correctly and hasn't expired.";
-  if (res.status === 403) return "The access key isn't allowed to do this. It needs Contents: Read and write for this repository.";
-  if (res.status === 404) return "Couldn't find the file. Check the username and repository name, and that the key has access to this repository.";
+async function explain(res, action) {
   let detail = "";
   try { detail = (await res.json()).message || ""; } catch (e) {}
-  return `GitHub returned an error (${res.status}). ${detail}`;
+  const said = detail ? ` (GitHub said: "${detail}")` : "";
+  if (res.status === 401) return `Couldn't ${action}: GitHub rejected the access key. Check it was copied correctly and hasn't expired.${said}`;
+  if (res.status === 403) return `Couldn't ${action}: the access key isn't allowed to. It needs Contents set to "Read and write" (not "Read-only") for this repository.${said}`;
+  if (res.status === 404) return `Couldn't ${action}: file not found. Check the username and repository name, and that the key has access to this repository.${said}`;
+  return `Couldn't ${action}: GitHub returned error ${res.status}.${said}`;
 }
 async function fetchRemote() {
   if (DEMO) {
@@ -257,7 +258,7 @@ async function fetchRemote() {
     return { text: await res.text(), sha: "demo" };
   }
   const res = await fetch(`${apiUrl()}?ref=${BRANCH}&t=${Date.now()}`, { headers: headers(), cache: "no-store" });
-  if (!res.ok) throw new Error(await explain(res));
+  if (!res.ok) throw new Error(await explain(res, "load the table"));
   const json = await res.json();
   return { text: b64ToText(json.content || ""), sha: json.sha };
 }
@@ -446,7 +447,7 @@ $("save").addEventListener("click", async () => {
       setStatus("The tracker updated the table while you were editing. Your changes are kept on top of the latest version: check them, then click Save again.", "error");
       return;
     }
-    if (!res.ok) throw new Error(await explain(res));
+    if (!res.ok) throw new Error(await explain(res, "save"));
     const json = await res.json();
     sha = json.content.sha;
     for (const r of rows) { r.original = JSON.stringify(r.data); r.isNew = false; r.key = r.data.incident_id || r.key; }
